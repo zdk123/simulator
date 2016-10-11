@@ -121,7 +121,7 @@ evaluate <- function(object, metrics) {
   } else if (class(output_ref) == "OutputRef") {
     output_ref <- list(output_ref)
   } else stop("Invalid class for output_ref.")
-  sf <- lapply(output_ref, function(oref) oref@simulator.files)
+  sf <- lapply(output_ref, function(oref) oref@simulator.files) 
   if (any(sf != getOption("simulator.files")))
     stop(sprintf("OutputRef's %s must match getOption(\"%s\")",
                  "simulator.files", "simulator.files"))

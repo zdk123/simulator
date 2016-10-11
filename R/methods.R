@@ -56,7 +56,7 @@ NULL
 #'  # then we could add
 #'  sim <- run_method(sim, my_example_method)
 #'  }
-run_method <- function(object, methods, out_loc = "out", parallel = NULL) {
+run_method <- function(object, methods, out_loc = "out", parallel = NULL, batch = NULL) {
   if (class(methods) == "list") {
     classes <- unlist(lapply(methods, class))
     stopifnot(classes %in% c("Method", "ExtendedMethod"))
@@ -66,10 +66,10 @@ run_method <- function(object, methods, out_loc = "out", parallel = NULL) {
              " object must be of class \"Simulation\" for now.")
         # run all the methods first followed by all the extended methods
         object <- run_method(object, methods = methods[classes == "Method"],
-                             out_loc = out_loc, parallel = parallel)
+                             out_loc = out_loc, parallel = parallel, batch = batch)
         object <- run_method(object,
                              methods = methods[classes == "ExtendedMethod"],
-                             out_loc = out_loc, parallel = parallel)
+                             out_loc = out_loc, parallel = parallel, batch = batch)
         return(invisible(object))
     }
   } else {
@@ -80,12 +80,20 @@ run_method <- function(object, methods, out_loc = "out", parallel = NULL) {
     draws_ref <- draws(object, reference = TRUE)
   else
     draws_ref <- object
+
   if (class(draws_ref) == "DrawsRef") draws_ref <- list(draws_ref)
   if (class(draws_ref) == "list") {
     if (all(lapply(draws_ref, class) == "list")) {
+        if (!is.null(batch)) batch$multi_batch <- TRUE
       # if this is a list of lists, simply apply this function to each list
-      oref <- lapply(draws_ref, run_method, methods = methods,
-                    out_loc = out_loc, parallel = parallel)
+        oref <- lapply(draws_ref, run_method, methods = methods,
+                      out_loc = out_loc, parallel = parallel, batch = batch)
+
+        if (!is.null(batch)) {
+          if (is.null(batch[[ 'progressbars' ]]))  batch$progressbars <- TRUE
+          oref <- lapply(oref, function(o)
+                    wrap_up_batch(o$reg, o$id, o$params, o$file, batch$progressbars))
+        }
       if (class(object) == "Simulation")
         return(invisible(add(object, oref)))
       else
@@ -118,7 +126,7 @@ run_method <- function(object, methods, out_loc = "out", parallel = NULL) {
   index <- sort(index)
   nmethods <- length(methods)
   orefs <- list()
-  if (is.null(parallel) || nmethods * length(index) == 1) {
+  if ((is.null(batch) && is.null(parallel)) || nmethods * length(index) == 1) {
     # run sequentially
     ii <- 1
     for (i in seq(length(index))) {
@@ -147,7 +155,7 @@ run_method <- function(object, methods, out_loc = "out", parallel = NULL) {
         ii <- ii + 1
       }
     }
-  } else {
+  } else if (!is.null(parallel)) {
     # run in parallel
     check_parallel_list(parallel)
     if (is.null(parallel$save_locally)) parallel$save_locally <- FALSE
@@ -164,6 +172,27 @@ run_method <- function(object, methods, out_loc = "out", parallel = NULL) {
                                    socket_names = parallel$socket_names,
                                    libraries = parallel$libraries,
                                    save_locally = parallel$save_locally)
+      } else stop("This should never happen!")
+    } else {
+      # run in batch mode
+    if (all(lapply(methods, class) == "Method")) {
+      if (is.null(batch[[ 'progressbars' ]]))  batch$progressbars <- TRUE
+      if (is.null(batch[[ 'libraries' ]]))     batch$libraries <- character(0L)
+      if (is.null(batch[[ 'job_resources' ]])) batch$job_resources <- list()
+      orefs <- run_method_batch(methods, dir, model_name,
+                                   index, out_dir, out_loc,
+                                   libraries = batch$libraries,
+                                   conf_file = batch$conf_file,
+                                   job_resources=batch$job_resources, #regdir,
+                                   progressbars=batch$progressbars)
+
+      # don't wrap here if there are multiple BatchJobs are submitted
+      if (is.null(batch$multi_batch) || !batch$multi_batch)
+        orefs <- wrap_up_batch(orefs$reg, orefs$id, orefs$params, orefs$file, batch$progressbars)
+
+    } else if (all(lapply(methods, class) == "ExtendedMethod")) {
+      # extended methods
+        stop("extended methods not yet implemented for batch mode")
       } else stop("This should never happen!")
     }
   if (class(object) == "Simulation")
@@ -271,6 +300,42 @@ save_output_to_file <- function(out_dir, dir, out_loc, output, info) {
       simulator.files = getOption("simulator.files"))
 }
 
+save_batchjob_output_to_file <- function(output, params, reg, id) {
+  njobs <- length(id)
+  if (any(id != seq(params[[2]])))
+    stop("Mismatch in number of outputs")
+  jobdir <- file.path(reg$file.dir, "jobs")
+  jobs   <- list.files(jobdir)
+  refs <- vector("list", njobs)
+
+  for (j in jobs) {
+    i <- as.numeric(j)
+    p1 <- params[[1]][[i]]
+    p2 <- params[[2]][[i]]
+    newfile <- sprintf("%s/r%s_%s.Rdata", p2$out_dir, p1$index, p1$method@name)
+    # copy BatchJobs new file #TODO: mv or link to save disk space?
+    oldfile <- file.path(jobdir, j, sprintf("%s-result.RData", i))
+    file.copy(oldfile, newfile)
+    refs[[i]] <- new("OutputRef", dir = p1$dir, model_name = p1$model_name,
+      index = p1$index, method_name = p1$method@name, out_loc = p2$out_loc,
+      simulator.files = getOption("simulator.files"))
+  }
+  return(refs)
+#  stopifnot(length(output@index) == 1)
+#  print(list.files(file.path(out_dir,  "BatchJobs")))
+#  file <- sprintf("%s/r%s_%s.Rdata", out_dir, output@index, output@method_name)
+#  save(output, info, file = file)
+#  avg_time <- mean(unlist(lapply(output@out, function(o) o$time[1])))
+#  catsim(sprintf("..Performed %s in %s seconds (on average over %s sims)",
+#                 output@method_label, round(avg_time, 2), length(output@out)),
+#                 fill = TRUE)
+#  new("OutputRef", dir = dir, model_name = output@model_name,
+#      index = output@index, method_name = output@method_name,
+#      out_loc = out_loc,
+#      simulator.files = getOption("simulator.files"))
+}
+
+
 #' Load one or more output objects from file.
 #'
 #' After \code{\link{run_method}} has been called, this function can
@@ -309,7 +374,10 @@ load_outputs <- function(dir, model_name, index, method_name, out_names = NULL,
              warning=function(w)
                stop(sprintf("Could not find output file at %s.",
                             output_files)))
-    output <- env$output
+    if (is.null(env[[ "result" ]]))
+      output <- env$output
+    else 
+      output <- env$result$output ## Handles BatchJobs output
     if (!is.null(out_names))
       output <- subset_output(output, out_names)
     if (more_info)

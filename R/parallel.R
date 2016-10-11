@@ -1,4 +1,4 @@
-#' Load necessary libraries on a cluster
+  #' Load necessary libraries on a cluster
 #' @keywords internal
 load_libraries_on_cluster <- function(cl, libs) {
   libs <- unique(libs)

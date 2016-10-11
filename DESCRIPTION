@@ -24,7 +24,8 @@ Suggests:
     rmarkdown,
     testthat,
     glmnet,
-    mvtnorm
+    mvtnorm,
+    BatchJobs
 License: GPL-3
 LazyData: true
 VignetteBuilder: knitr
@@ -40,6 +41,8 @@ Collate:
     'simulation-class.R'
     'add-to-simulation.R'
     'aggregator-class.R'
+    'batch-methods.R'
+    'batch.R'
     'utils.R'
     'create.R'
     'draws.R'
