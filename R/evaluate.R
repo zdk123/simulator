@@ -134,7 +134,7 @@ evaluate <- function(object, metrics) {
                                 index = output_ref[[o]]@index,
                                 method_names = output_ref[[o]]@method_name,
                                 out_loc = output_ref[[o]]@out_loc))
-  }
+  } 
   if (class(object) == "Simulation")
     return(invisible(add(object, eref)))
   invisible(eref)
